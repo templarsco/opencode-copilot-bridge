@@ -117,27 +117,33 @@ jobs:
           $dest = "opencode-copilot-bridge-$version-windows-x64.exe"
           Copy-Item $exe $dest
 
-          # Create release
-          gh release create $tag $dest `
-            --title "OpenCode Copilot Bridge $version" `
-            --notes "Patched OpenCode $version with Copilot JWT bridge for full model access.
+          # Write release notes to file
+          $notes = @"
+          Patched OpenCode $version with Copilot JWT bridge for full model access.
 
-## What's included
-- Pre-built Windows x64 binary with JWT token exchange patch
-- Unlocks models available in VS Code Copilot but not yet in OpenCode (e.g. claude-opus-4.6-fast)
+          ## What's included
+          - Pre-built Windows x64 binary with JWT token exchange patch
+          - Unlocks models available in VS Code Copilot but not yet in OpenCode (e.g. claude-opus-4.6-fast)
 
-## Requirements
-- VS Code with GitHub Copilot extension (authenticated)
-- Windows x64
+          ## Requirements
+          - VS Code with GitHub Copilot extension (authenticated)
+          - Windows x64
 
-## Usage
-1. Download the .exe below
-2. Replace your installed OpenCode binary:
-   - Desktop: ``%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe``
-   - CLI: ``%USERPROFILE%\.bun\bin\opencode.exe``
-3. Run ``bun run scripts/discover-models.ts --apply`` to auto-discover and configure new models
-4. Restart OpenCode
+          ## Usage
+          1. Download the .exe below
+          2. Replace your installed OpenCode binary:
+             - Desktop: ``%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe``
+             - CLI: ``%USERPROFILE%\.bun\bin\opencode.exe``
+          3. Run ``bun run scripts/discover-models.ts --apply`` to auto-discover and configure new models
+          4. Restart OpenCode
 
-Based on OpenCode $version"
+          Based on OpenCode $version
+          "@
+
+          # Trim leading whitespace from each line (heredoc indentation)
+          $notes = ($notes -split "`n" | ForEach-Object { $_.TrimStart() }) -join "`n"
+          $notes | Out-File -FilePath notes.md -Encoding utf8
+
+          gh release create $tag $dest --title "OpenCode Copilot Bridge $version" --notes-file notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
