@@ -31,16 +31,24 @@ This bridge fixes both **authentication** and **model discovery**:
 ### Option 1: One-liner Install (Easiest)
 
 ```powershell
+# Install stable bridge (Desktop Stable + CLI)
 irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+
+# Install beta bridge (Desktop Beta)
+powershell -Command "& { $script = irm 'https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1'; $sb = [scriptblock]::Create($script); & $sb -Channel beta }"
+
+# Install both stable and beta
+powershell -Command "& { $script = irm 'https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1'; $sb = [scriptblock]::Create($script); & $sb -Channel all }"
 ```
 
 This wizard automatically:
-- Downloads the latest bridge binary
+- Downloads the latest bridge binary for the selected channel
 - Closes any running OpenCode instances
 - Backs up original binaries (`.original`)
-- Replaces sidecars in Desktop (Stable + Beta) and CLI
+- Replaces sidecars in the appropriate installations:
+  - **Stable**: Desktop Stable (`%LOCALAPPDATA%\OpenCode\`) + CLI (`%USERPROFILE%\.bun\bin\`)
+  - **Beta**: Desktop Beta (`%LOCALAPPDATA%\OpenCode Beta\`)
 - Restarts Desktop apps
-
 To uninstall and restore originals:
 ```powershell
 git clone https://github.com/templarsco/opencode-copilot-bridge.git
@@ -49,18 +57,20 @@ git clone https://github.com/templarsco/opencode-copilot-bridge.git
 
 ### Option 2: Manual Install
 
-1. Download the latest `.exe` from [Releases](../../releases)
+1. Download the latest `.exe` from [Releases](../../releases):
+   - **Stable**: `opencode-copilot-bridge-*-stable-windows-x64.exe`
+   - **Beta**: `opencode-copilot-bridge-*-beta-windows-x64.exe`
 2. Close OpenCode (all instances)
 3. Replace your installed OpenCode binary:
    ```
-   # Desktop Stable sidecar
-   copy opencode-copilot-bridge-*.exe "%LOCALAPPDATA%\OpenCode\opencode-cli.exe"
+   # Desktop Stable sidecar (use stable binary)
+   copy opencode-copilot-bridge-*-stable-*.exe "%LOCALAPPDATA%\OpenCode\opencode-cli.exe"
 
-   # Desktop Beta sidecar
-   copy opencode-copilot-bridge-*.exe "%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe"
+   # Desktop Beta sidecar (use beta binary)
+   copy opencode-copilot-bridge-*-beta-*.exe "%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe"
 
-   # CLI (standalone)
-   copy opencode-copilot-bridge-*.exe "%USERPROFILE%\.bun\bin\opencode.exe"
+   # CLI (use stable binary)
+   copy opencode-copilot-bridge-*-stable-*.exe "%USERPROFILE%\.bun\bin\opencode.exe"
    ```
 4. Restart OpenCode
 
@@ -171,19 +181,26 @@ See `config/opencode.json.example` for a full example.
 
 ## Auto-Build CI
 
-This repo includes a GitHub Actions workflow that:
-1. Checks for new **stable releases** of OpenCode every 6 hours
+This repo includes a GitHub Actions workflow that tracks **both channels**:
+
+| Channel | Source | Tag Pattern | Check Frequency |
+|---|---|---|---|
+| **Stable** | `anomalyco/opencode` | `bridge-v1.2.x` | Every 6 hours |
+| **Beta** | `anomalyco/opencode-beta` | `bridge-beta-YYYYMMDDHHMM` | Every 6 hours |
+
+For each channel, the CI:
+1. Checks for new upstream releases
 2. Clones the release tag (via `OPENCODE_PAT` secret), applies the patch, builds a Windows binary
-3. Creates a tagged release (`bridge-vX.Y.Z`) with the patched `.exe`
+3. Creates a tagged release with the patched `.exe`
 
 ### Setup
 
-The CI needs access to the OpenCode source repository. Add a GitHub PAT as a secret:
+The CI needs access to both OpenCode source repositories. Add a GitHub PAT as a secret:
 
 1. Go to **Settings → Secrets and variables → Actions**
-2. Add secret `OPENCODE_PAT` with a PAT that has `repo` scope and read access to `anomalyco/opencode`
+2. Add secret `OPENCODE_PAT` with a PAT that has `repo` scope and read access to `anomalyco/opencode` AND `anomalyco/opencode-beta`
 
-You can also trigger a build manually from the [Actions tab](../../actions).
+You can also trigger a build manually from the [Actions tab](../../actions), choosing to build `stable`, `beta`, or `both`.
 
 ## Troubleshooting
 

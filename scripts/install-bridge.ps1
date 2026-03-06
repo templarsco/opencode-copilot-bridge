@@ -1,19 +1,22 @@
-# install-bridge.ps1 — OpenCode Copilot Bridge Installer
-#
-# Downloads the latest bridge release, closes all OpenCode instances,
-# replaces sidecars with the patched binary, and restarts the apps.
-#
-# One-liner install (PowerShell):
-#   irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
-#
-# From cloned repo:
-#   .\scripts\install-bridge.ps1
-#   .\scripts\install-bridge.ps1 -Uninstall         # Restore originals
-#   .\scripts\install-bridge.ps1 -Version bridge-v1.2.20  # Specific version
-
+#MZ|# install-bridge.ps1 — OpenCode Copilot Bridge Installer
+#ZW|#
+#TY|# Downloads the latest bridge release, closes all OpenCode instances,
+#PJ|# replaces sidecars with the patched binary, and restarts the apps.
+#NJ|#
+#HY|# One-liner install (PowerShell):
+#QS|#   irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex (defaults to stable)
+#BJ|#
+#MT|# From cloned repo:
+#PR|#   .\scripts\install-bridge.ps1
+#WQ|#   .\scripts\install-bridge.ps1 -Uninstall         # Restore originals
+#ZR|#   .\scripts\install-bridge.ps1 -Version bridge-v1.2.20  # Specific version
+#XX|#   .\scripts\install-bridge.ps1 -Channel beta          # Beta channel
+#XX|#   .\scripts\install-bridge.ps1 -Channel all           # Both stable + beta
+#BQ|
 param(
     [switch]$Uninstall,
-    [string]$Version = ""
+    [string]$Version = "",
+    [ValidateSet('stable', 'beta', 'all')][string]$Channel = 'stable'
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,8 +46,9 @@ $targets = @(
 
 # ─── Banner ─────────────────────────────────────────────────────────
 Write-Host ""
+$bannerTitle = "OpenCode Copilot Bridge - Installer ($Channel channel)"
 Write-Host "  +=============================================+" -ForegroundColor Cyan
-Write-Host "  |   OpenCode Copilot Bridge - Installer       |" -ForegroundColor Cyan
+Write-Host "  |   $bannerTitle" -ForegroundColor Cyan
 Write-Host "  +=============================================+" -ForegroundColor Cyan
 Write-Host ""
 
@@ -97,63 +101,119 @@ if ($found.Count -eq 0) {
     return
 }
 
-# ─── Step 2: Fetch latest release ──────────────────────────────────
-Write-Host "`n[2/5] Fetching latest bridge release..." -ForegroundColor Yellow
+# ─── Step 2: Fetch latest release(s) ───────────────────────────────
+Write-Host "`n[2/5] Fetching latest bridge release(s)..." -ForegroundColor Yellow
+
+# Helper: Fetch a specific release or tag
+function Get-BridgeRelease([string]$tag) {
+    if ($tag) {
+        $url = "$apiBase/releases/tags/$tag"
+    } else {
+        $url = "$apiBase/releases/latest"
+    }
+    try {
+        return Invoke-RestMethod -Uri $url -Headers @{ "User-Agent" = "opencode-bridge-installer" }
+    } catch {
+        return $null
+    }
+}
+
+# Helper: Find asset matching pattern
+function Find-Asset([object]$release, [string]$pattern) {
+    return $release.assets | Where-Object { $_.name -like $pattern } | Select-Object -First 1
+}
+
+# Fetch release(s) based on channel
+$releases = @{}
+$assets = @{}
 
 if ($Version) {
-    $releaseUrl = "$apiBase/releases/tags/$Version"
-} else {
-    $releaseUrl = "$apiBase/releases/latest"
+    # Explicit version overrides channel
+    $release = Get-BridgeRelease -tag $Version
+    if (-not $release) {
+        Write-Host "  Release $Version not found." -ForegroundColor Red
+        Write-Host ""
+        return
+    }
+    $releases['explicit'] = $release
+    $assets['explicit'] = Find-Asset $release "*windows-x64*exe"
+} elseif ($Channel -eq 'stable' -or $Channel -eq 'all') {
+    # Fetch all releases and find latest stable (non-beta tag)
+    $allReleases = Invoke-RestMethod -Uri "$apiBase/releases" -Headers @{ "User-Agent" = "opencode-bridge-installer" }
+    $stableRelease = $allReleases | Where-Object { $_.tag_name -like 'bridge-v*' -and $_.tag_name -notlike '*beta*' } | Select-Object -First 1
+    if (-not $stableRelease) {
+        Write-Host "  No stable release found." -ForegroundColor Red
+        Write-Host ""
+        return
+    }
+    $releases['stable'] = $stableRelease
+    $assets['stable'] = Find-Asset $stableRelease "*-stable-windows-x64.exe"
 }
 
-try {
-    $release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ "User-Agent" = "opencode-bridge-installer" }
-} catch {
-    Write-Host "  Failed to fetch release info." -ForegroundColor Red
-    Write-Host "  Error: $_" -ForegroundColor DarkRed
+if ($Channel -eq 'beta' -or $Channel -eq 'all') {
+    # Fetch all releases and find latest beta
+    $allReleases = Invoke-RestMethod -Uri "$apiBase/releases" -Headers @{ "User-Agent" = "opencode-bridge-installer" }
+    $betaRelease = $allReleases | Where-Object { $_.tag_name -like 'bridge-beta-*' } | Select-Object -First 1
+    if (-not $betaRelease) {
+        Write-Host "  No beta release found." -ForegroundColor Red
+        Write-Host ""
+        return
+    }
+    $releases['beta'] = $betaRelease
+    $assets['beta'] = Find-Asset $betaRelease "*-beta-windows-x64.exe"
+}
+
+# Validate that we have at least one asset
+if ($assets.Count -eq 0) {
+    Write-Host "  No compatible binaries found for channel '$Channel'." -ForegroundColor Red
     Write-Host ""
     return
 }
 
-$tag = $release.tag_name
-$releaseName = $release.name
-$asset = $release.assets | Where-Object { $_.name -like "*windows-x64*" -and $_.name -like "*.exe" } | Select-Object -First 1
-
-if (-not $asset) {
-    Write-Host "  No Windows x64 binary found in release $tag" -ForegroundColor Red
-    Write-Host ""
-    return
+# Log what we're installing
+foreach ($key in $releases.Keys) {
+    $rel = $releases[$key]
+    $asset = $assets[$key]
+    if ($asset) {
+        $sizeMB = [math]::Round($asset.size / 1MB, 1)
+        Write-Host "  Release: $($rel.name) [$($rel.tag_name)]" -ForegroundColor Green
+        Write-Host "  Binary:  $($asset.name) ($sizeMB MB)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  WARNING: No Windows x64 binary found for $($rel.tag_name)" -ForegroundColor Yellow
+    }
 }
-
-$sizeMB = [math]::Round($asset.size / 1MB, 1)
-Write-Host "  Release: $releaseName" -ForegroundColor Green
-Write-Host "  Tag:     $tag" -ForegroundColor DarkGray
-Write-Host "  Binary:  $($asset.name) ($sizeMB MB)" -ForegroundColor DarkGray
 
 # ─── Step 3: Download ──────────────────────────────────────────────
-Write-Host "`n[3/5] Downloading bridge binary..." -ForegroundColor Yellow
+Write-Host "`n[3/5] Downloading bridge binary(ies)..." -ForegroundColor Yellow
 $tempDir = Join-Path $env:TEMP "opencode-bridge-install"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-$downloadPath = Join-Path $tempDir $asset.name
+$downloads = @{}
 
-try {
-    $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $downloadPath -UseBasicParsing
-    $ProgressPreference = 'Continue'
-} catch {
-    Write-Host "  Download failed: $_" -ForegroundColor Red
-    Write-Host ""
-    return
+foreach ($key in $assets.Keys) {
+    $asset = $assets[$key]
+    if (-not $asset) { continue }
+    
+    $downloadPath = Join-Path $tempDir $asset.name
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $downloadPath -UseBasicParsing
+        $ProgressPreference = 'Continue'
+    } catch {
+        Write-Host "  Download failed [$key]: $_" -ForegroundColor Red
+        Write-Host ""
+        return
+    }
+    
+    if (-not (Test-Path $downloadPath)) {
+        Write-Host "  Download failed [$key] — file not found." -ForegroundColor Red
+        Write-Host ""
+        return
+    }
+    
+    $actualSize = [math]::Round((Get-Item $downloadPath).Length / 1MB, 1)
+    Write-Host "  Downloaded [$key]: $actualSize MB" -ForegroundColor Green
+    $downloads[$key] = $downloadPath
 }
-
-if (-not (Test-Path $downloadPath)) {
-    Write-Host "  Download failed — file not found." -ForegroundColor Red
-    Write-Host ""
-    return
-}
-
-$actualSize = [math]::Round((Get-Item $downloadPath).Length / 1MB, 1)
-Write-Host "  Downloaded: $actualSize MB" -ForegroundColor Green
 
 # ─── Step 4: Kill OpenCode processes ───────────────────────────────
 Write-Host "`n[4/5] Closing OpenCode processes..." -ForegroundColor Yellow
@@ -181,29 +241,59 @@ if (-not $killed) {
 }
 
 # ─── Step 5: Replace binaries ──────────────────────────────────────
-Write-Host "`n[5/5] Installing bridge binary..." -ForegroundColor Yellow
+Write-Host "`n[5/5] Installing bridge binary(ies)..." -ForegroundColor Yellow
 $installed = @()
 $appsToRestart = @()
 
-foreach ($target in $found) {
-    # Backup original (only first time — never overwrite existing backup)
-    if ((Test-Path $target.Path) -and -not (Test-Path "$($target.Path).original")) {
-        Copy-Item $target.Path "$($target.Path).original" -Force
-        Write-Host "  Backed up original: $($target.Name)" -ForegroundColor DarkGray
-    }
+# Map releases to target installations based on channel
+$targetsByChannel = @{
+    'stable' = @(
+        $targets | Where-Object { $_.Name -eq 'Desktop (Stable)' },
+        $targets | Where-Object { $_.Name -eq 'CLI (Bun)' }
+    )
+    'beta' = @(
+        $targets | Where-Object { $_.Name -eq 'Desktop (Beta)' }
+    )
+}
 
-    try {
-        Copy-Item $downloadPath $target.Path -Force
-        Write-Host "  Installed: $($target.Name)" -ForegroundColor Green
-        $installed += $target.Name
-    } catch {
-        Write-Host "  FAILED:   $($target.Name) — $_" -ForegroundColor Red
-        Write-Host "            Close the app manually and re-run." -ForegroundColor DarkRed
+# Process each downloaded binary
+foreach ($downloadKey in $downloads.Keys) {
+    $downloadPath = $downloads[$downloadKey]
+    
+    # Determine which targets this binary applies to
+    if ($Version) {
+        # When using explicit version, apply to all found targets
+        $targetsForBinary = $found
+    } else {
+        # Otherwise use channel-specific targets
+        $targetsForBinary = $targetsByChannel[$downloadKey] | Where-Object { $_ -in $found }
+    }
+    
+    if ($targetsForBinary.Count -eq 0) {
+        Write-Host "  Skipped [$downloadKey]: No matching targets installed" -ForegroundColor DarkGray
         continue
     }
-
-    if ($target.App -and (Test-Path $target.App)) {
-        $appsToRestart += $target
+    
+    foreach ($target in $targetsForBinary) {
+        # Backup original (only first time — never overwrite existing backup)
+        if ((Test-Path $target.Path) -and -not (Test-Path "$($target.Path).original")) {
+            Copy-Item $target.Path "$($target.Path).original" -Force
+            Write-Host "  Backed up original: $($target.Name)" -ForegroundColor DarkGray
+        }
+        
+        try {
+            Copy-Item $downloadPath $target.Path -Force
+            Write-Host "  Installed [$downloadKey]: $($target.Name)" -ForegroundColor Green
+            $installed += "$($target.Name) ($downloadKey)"
+        } catch {
+            Write-Host "  FAILED   [$downloadKey]: $($target.Name) — $_" -ForegroundColor Red
+            Write-Host "            Close the app manually and re-run." -ForegroundColor DarkRed
+            continue
+        }
+        
+        if ($target.App -and (Test-Path $target.App)) {
+            $appsToRestart += $target
+        }
     }
 }
 
@@ -221,8 +311,9 @@ Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 
 # ─── Summary ────────────────────────────────────────────────────────
 Write-Host ""
+$tagSummary = if ($Version) { $Version } else { "$Channel channel" }
 Write-Host "  +=============================================+" -ForegroundColor Green
-Write-Host "  |   Bridge $tag installed!       |" -ForegroundColor Green
+Write-Host "  |   Bridge $tagSummary installed!      |" -ForegroundColor Green
 Write-Host "  +=============================================+" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Patched: $($installed -join ', ')" -ForegroundColor Cyan

@@ -1,19 +1,27 @@
 name: Build Patched OpenCode (Windows)
 
 on:
-  # Manual trigger
   workflow_dispatch:
     inputs:
       opencode_ref:
-        description: 'Git ref to build (branch, tag, or commit). Leave empty for latest stable release.'
+        description: 'Stable only: Git ref to build (branch, tag, or commit). Leave empty for latest stable release.'
         required: false
         default: ''
       force_build:
-        description: 'Force build even if version already released'
+        description: 'Force build even if release already exists'
         required: false
         default: 'false'
+      channel:
+        description: 'Channel to build'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - stable
+          - beta
+          - both
 
-  # Check for new stable releases every 6 hours
+  # Check both stable and beta releases every 6 hours
   schedule:
     - cron: '0 */6 * * *'
 
@@ -22,7 +30,15 @@ permissions:
 
 jobs:
   check-and-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.channel == 'both' || github.event.inputs.channel == matrix.channel }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - stable
+          - beta
+
     steps:
       - name: Checkout bridge repo
         uses: actions/checkout@v4
@@ -32,53 +48,87 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Determine OpenCode version
+      - name: Determine upstream version and release metadata
         id: version
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
+          $channel = "${{ matrix.channel }}"
 
-          if ("${{ github.event.inputs.opencode_ref }}" -ne "") {
-            # Manual override: use the specified ref directly
-            $ref = "${{ github.event.inputs.opencode_ref }}"
-            $version = $ref
+          if ($channel -eq "stable") {
+            $repo = "anomalyco/opencode"
+            if ("${{ github.event.inputs.opencode_ref }}" -ne "") {
+              $ref = "${{ github.event.inputs.opencode_ref }}"
+              $version = $ref
+              Write-Host "Using manual stable ref: $ref"
+            } else {
+              $tagJson = gh release view --repo anomalyco/opencode --json tagName 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                Write-Error "Failed to fetch latest stable release: $tagJson"
+                exit 1
+              }
+              $tag = ($tagJson | ConvertFrom-Json).tagName
+              $ref = $tag
+              $version = $tag
+              Write-Host "Latest stable release: $tag"
+            }
+
+            $releaseTag = "bridge-$version"
+            $releaseTitle = "OpenCode Copilot Bridge $version"
+            $channelLabel = "Stable"
           } else {
-            # Auto: get latest stable release tag from anomalyco/opencode
-            $tagJson = gh release view --repo anomalyco/opencode --json tagName 2>&1
+            $repo = "anomalyco/opencode-beta"
+            $tagJson = gh release view --repo anomalyco/opencode-beta --json tagName 2>&1
             if ($LASTEXITCODE -ne 0) {
-              Write-Error "Failed to fetch latest release: $tagJson"
+              Write-Error "Failed to fetch latest beta release: $tagJson"
               exit 1
             }
             $tag = ($tagJson | ConvertFrom-Json).tagName
             $ref = $tag
             $version = $tag
-            Write-Host "Latest stable release: $tag"
+            Write-Host "Latest beta release: $tag"
+
+            if ($tag -notmatch '^v0\.0\.0-beta-(\d{12})$') {
+              Write-Error "Beta tag format is unexpected: $tag"
+              exit 1
+            }
+
+            $timestamp = $matches[1]
+            $releaseTag = "bridge-beta-$timestamp"
+            $releaseTitle = "OpenCode Copilot Bridge Beta $version"
+            $channelLabel = "Beta"
           }
 
-          # Get the commit SHA for the ref
-          $shaFull = gh api "repos/anomalyco/opencode/commits/$ref" --jq '.sha' 2>&1
+          $shaFull = gh api "repos/$repo/commits/$ref" --jq '.sha' 2>&1
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to fetch commit SHA for ref '$ref': $shaFull"
+            Write-Error "Failed to fetch commit SHA for $repo@$ref: $shaFull"
             exit 1
           }
-          $sha = $shaFull.Substring(0, 7)
 
-          Write-Host "OpenCode ref: $ref"
-          Write-Host "Commit: $sha"
-          Write-Host "Version: $version"
+          $sha = $shaFull.Substring(0, 7)
+          $asset = "opencode-copilot-bridge-$version-$channel-windows-x64.exe"
+          $forceBuild = "${{ github.event.inputs.force_build }}" -eq "true"
+
+          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY --json tagName 1>$null 2>$null
+          $exists = $LASTEXITCODE -eq 0
+
+          if ($exists -and -not $forceBuild) {
+            Write-Host "Release $releaseTag already exists for $channel. Skipping."
+            $skip = "true"
+          } else {
+            $skip = "false"
+          }
+
+          echo "repo=$repo" >> $env:GITHUB_OUTPUT
+          echo "channel=$channel" >> $env:GITHUB_OUTPUT
+          echo "channel_label=$channelLabel" >> $env:GITHUB_OUTPUT
           echo "ref=$ref" >> $env:GITHUB_OUTPUT
           echo "version=$version" >> $env:GITHUB_OUTPUT
           echo "sha=$sha" >> $env:GITHUB_OUTPUT
-
-          # Check if we already have a release for this version
-          $releases = (gh release list --repo $env:GITHUB_REPOSITORY --json tagName --jq '.[].tagName' 2>$null) -split "`n"
-          $tagName = "bridge-$version"
-          if ($releases -contains $tagName -and "${{ github.event.inputs.force_build }}" -ne "true") {
-            Write-Host "Release $tagName already exists. Skipping."
-            echo "skip=true" >> $env:GITHUB_OUTPUT
-          } else {
-            echo "skip=false" >> $env:GITHUB_OUTPUT
-          }
+          echo "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
+          echo "release_title=$releaseTitle" >> $env:GITHUB_OUTPUT
+          echo "asset=$asset" >> $env:GITHUB_OUTPUT
+          echo "skip=$skip" >> $env:GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
@@ -86,9 +136,10 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
+          $repo = "${{ steps.version.outputs.repo }}"
           $ref = "${{ steps.version.outputs.ref }}"
-          git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
-          Write-Host "Cloned OpenCode ref: $ref"
+          git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/$repo.git" opencode-src
+          Write-Host "Cloned $repo ref: $ref"
 
       - name: Apply Copilot JWT patch
         if: steps.version.outputs.skip != 'true'
@@ -112,6 +163,9 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $env:OPENCODE_VERSION = "bridge-$version"
+
           Push-Location opencode-src
           bun run ./packages/opencode/script/build.ts --single
           Pop-Location
@@ -130,27 +184,32 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
-          $PSNativeCommandUseErrorActionPreference = $false
+          $releaseTag = "${{ steps.version.outputs.release_tag }}"
+          $releaseTitle = "${{ steps.version.outputs.release_title }}"
           $version = "${{ steps.version.outputs.version }}"
           $sha = "${{ steps.version.outputs.sha }}"
-          $tag = "bridge-$version"
+          $channel = "${{ steps.version.outputs.channel }}"
+          $channelLabel = "${{ steps.version.outputs.channel_label }}"
+          $repo = "${{ steps.version.outputs.repo }}"
+          $asset = "${{ steps.version.outputs.asset }}"
           $exe = "opencode-src\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe"
 
-          # Rename binary with version
-          $dest = "opencode-copilot-bridge-$version-windows-x64.exe"
-          Copy-Item $exe $dest
+          Copy-Item $exe $asset
 
-          # Write release notes to file
           $notes = @"
-          Patched OpenCode $version ($sha) with Copilot JWT bridge for full model access.
+          Patched OpenCode $version ($sha) for the $channelLabel channel with Copilot JWT bridge.
+
+          ## Channel
+          - $channelLabel
+
+          ## Upstream
+          - Repository: $repo
+          - Version tag: $version
+          - Commit: $sha
 
           ## What's included
-          - Pre-built Windows x64 binary with JWT token exchange patch
-          - Unlocks models available in VS Code Copilot but not yet in OpenCode
-
-          ## Requirements
-          - VS Code with GitHub Copilot extension (authenticated)
-          - Windows x64
+          - Pre-built Windows x64 CLI binary
+          - Copilot JWT patch for full model access
 
           ## Usage
           1. Download the .exe below
@@ -158,16 +217,11 @@ jobs:
              - Desktop (Stable): ``%LOCALAPPDATA%\OpenCode\opencode-cli.exe``
              - Desktop (Beta): ``%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe``
              - CLI (Bun): ``%USERPROFILE%\.bun\bin\opencode.exe``
-          3. Run ``bun run scripts/discover-models.ts --apply`` to auto-discover and configure new models
-          4. Restart OpenCode
-
-          Based on OpenCode $version (anomalyco/opencode@$sha)
           "@
 
-          # Trim leading whitespace from each line (heredoc indentation)
           $notes = ($notes -split "`n" | ForEach-Object { $_.TrimStart() }) -join "`n"
           $notes | Out-File -FilePath notes.md -Encoding utf8
 
-          gh release create $tag $dest --title "OpenCode Copilot Bridge $version" --notes-file notes.md
+          gh release create $releaseTag $asset --title $releaseTitle --notes-file notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
