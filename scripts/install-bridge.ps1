@@ -248,8 +248,8 @@ $appsToRestart = @()
 # Map releases to target installations based on channel
 $targetsByChannel = @{
     'stable' = @(
-        $targets | Where-Object { $_.Name -eq 'Desktop (Stable)' },
-        $targets | Where-Object { $_.Name -eq 'CLI (Bun)' }
+        ($targets | Where-Object { $_.Name -eq 'Desktop (Stable)' })
+        ($targets | Where-Object { $_.Name -eq 'CLI (Bun)' })
     )
     'beta' = @(
         $targets | Where-Object { $_.Name -eq 'Desktop (Beta)' }
