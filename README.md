@@ -160,9 +160,16 @@ See `config/opencode.json.example` for a full example.
 ## Auto-Build CI
 
 This repo includes a GitHub Actions workflow that:
-1. Checks for new OpenCode releases every 6 hours
-2. Clones the release, applies the patch, builds a Windows binary
-3. Creates a tagged release (`bridge-v1.x.x`) with the patched `.exe`
+1. Checks for new commits on the OpenCode dev branch every 6 hours
+2. Clones the source (via `OPENCODE_PAT` secret), applies the patch, builds a Windows binary
+3. Creates a tagged release (`bridge-vX.Y.Z`) with the patched `.exe`
+
+### Setup
+
+The CI needs access to the OpenCode source repository. Add a GitHub PAT as a secret:
+
+1. Go to **Settings → Secrets and variables → Actions**
+2. Add secret `OPENCODE_PAT` with a PAT that has `repo` scope and read access to `anomalyco/opencode`
 
 You can also trigger a build manually from the [Actions tab](../../actions).
 

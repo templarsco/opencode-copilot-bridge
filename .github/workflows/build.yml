@@ -1,21 +1,21 @@
 name: Build Patched OpenCode (Windows)
 
 on:
-  # Auto-trigger when OpenCode releases a new version
-  schedule:
-    - cron: '0 */6 * * *'  # Check every 6 hours
-
   # Manual trigger
   workflow_dispatch:
     inputs:
-      opencode_version:
-        description: 'OpenCode version tag (e.g. v1.2.17). Leave empty for latest.'
+      opencode_ref:
+        description: 'Git ref to build (branch, tag, or commit). Leave empty for dev HEAD.'
         required: false
         default: ''
       force_build:
         description: 'Force build even if version already released'
         required: false
         default: 'false'
+
+  # Check for new commits on dev branch every 6 hours
+  schedule:
+    - cron: '0 */6 * * *'
 
 permissions:
   contents: write
@@ -36,19 +36,40 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          if ("${{ github.event.inputs.opencode_version }}" -ne "") {
-            $version = "${{ github.event.inputs.opencode_version }}"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          if ("${{ github.event.inputs.opencode_ref }}" -ne "") {
+            $ref = "${{ github.event.inputs.opencode_ref }}"
           } else {
-            # Fetch latest release from OpenCode
-            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/opencode-ai/opencode/releases/latest" -Headers @{ "User-Agent" = "opencode-copilot-bridge" }
-            $version = $release.tag_name
+            $ref = "dev"
           }
-          Write-Host "OpenCode version: $version"
+
+          # Get the latest commit SHA for the ref
+          $commitInfo = gh api "repos/anomalyco/opencode/commits/$ref" --jq '{sha: .sha, message: .commit.message}' 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to fetch commit info for ref '$ref': $commitInfo"
+            exit 1
+          }
+          $commit = ($commitInfo | ConvertFrom-Json)
+          $sha = $commit.sha.Substring(0, 7)
+
+          # Try to extract version from commit message (e.g. "release: v1.2.17")
+          $msg = $commit.message
+          if ($msg -match 'v\d+\.\d+\.\d+') {
+            $version = $Matches[0]
+          } else {
+            $version = "dev-$sha"
+          }
+
+          Write-Host "OpenCode ref: $ref"
+          Write-Host "Commit: $sha"
+          Write-Host "Version: $version"
+          echo "ref=$ref" >> $env:GITHUB_OUTPUT
           echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "sha=$sha" >> $env:GITHUB_OUTPUT
 
           # Check if we already have a release for this version
-          $PSNativeCommandUseErrorActionPreference = $false
-          $releases = (gh release list --json tagName --jq '.[].tagName' 2>$null) -split "`n"
+          $releases = (gh release list --repo $env:GITHUB_REPOSITORY --json tagName --jq '.[].tagName' 2>$null) -split "`n"
           $tagName = "bridge-$version"
           if ($releases -contains $tagName -and "${{ github.event.inputs.force_build }}" -ne "true") {
             Write-Host "Release $tagName already exists. Skipping."
@@ -57,29 +78,29 @@ jobs:
             echo "skip=false" >> $env:GITHUB_OUTPUT
           }
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Clone OpenCode source
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          git clone --depth 1 --branch $version https://github.com/opencode-ai/opencode.git opencode-src
-          Write-Host "Cloned OpenCode $version"
+          $ref = "${{ steps.version.outputs.ref }}"
+          git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
+          Write-Host "Cloned OpenCode ref: $ref"
 
       - name: Apply patch
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $false
           Push-Location opencode-src
-          $patchResult = git apply --check ..\patches\copilot.ts.patch 2>&1
+          git apply --check ..\patches\copilot.ts.patch 2>&1
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "Patch check failed: $patchResult" -ForegroundColor Yellow
-            Write-Host "Attempting to apply anyway..." -ForegroundColor Yellow
+            Write-Host "Patch check failed. Attempting direct apply..." -ForegroundColor Yellow
           }
           git apply ..\patches\copilot.ts.patch
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Patch does not apply cleanly to this version"
+            Write-Error "Patch does not apply cleanly to this version. May need updating."
             exit 1
           }
           Write-Host "Patch applied successfully"
@@ -115,7 +136,9 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $false
           $version = "${{ steps.version.outputs.version }}"
+          $sha = "${{ steps.version.outputs.sha }}"
           $tag = "bridge-$version"
           $exe = "opencode-src\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe"
 
@@ -125,11 +148,11 @@ jobs:
 
           # Write release notes to file
           $notes = @"
-          Patched OpenCode $version with Copilot JWT bridge for full model access.
+          Patched OpenCode $version ($sha) with Copilot JWT bridge for full model access.
 
           ## What's included
           - Pre-built Windows x64 binary with JWT token exchange patch
-          - Unlocks models available in VS Code Copilot but not yet in OpenCode (e.g. claude-opus-4.6-fast)
+          - Unlocks models available in VS Code Copilot but not yet in OpenCode
 
           ## Requirements
           - VS Code with GitHub Copilot extension (authenticated)
@@ -143,7 +166,7 @@ jobs:
           3. Run ``bun run scripts/discover-models.ts --apply`` to auto-discover and configure new models
           4. Restart OpenCode
 
-          Based on OpenCode $version
+          Based on OpenCode $version (anomalyco/opencode@$sha)
           "@
 
           # Trim leading whitespace from each line (heredoc indentation)
