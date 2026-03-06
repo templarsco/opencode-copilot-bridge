@@ -28,42 +28,54 @@ This bridge fixes both **authentication** and **model discovery**:
 
 ## Quick Start
 
-### Option 1: Pre-built Binary (Easiest)
+### Option 1: One-liner Install (Easiest)
+
+```powershell
+irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+```
+
+This wizard automatically:
+- Downloads the latest bridge binary
+- Closes any running OpenCode instances
+- Backs up original binaries (`.original`)
+- Replaces sidecars in Desktop (Stable + Beta) and CLI
+- Restarts Desktop apps
+
+To uninstall and restore originals:
+```powershell
+git clone https://github.com/templarsco/opencode-copilot-bridge.git
+.\opencode-copilot-bridge\scripts\install-bridge.ps1 -Uninstall
+```
+
+### Option 2: Manual Install
 
 1. Download the latest `.exe` from [Releases](../../releases)
-2. Replace your installed OpenCode binary:
+2. Close OpenCode (all instances)
+3. Replace your installed OpenCode binary:
    ```
-   # Desktop app sidecar
+   # Desktop Stable sidecar
+   copy opencode-copilot-bridge-*.exe "%LOCALAPPDATA%\OpenCode\opencode-cli.exe"
+
+   # Desktop Beta sidecar
    copy opencode-copilot-bridge-*.exe "%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe"
 
-   # CLI (if using standalone CLI)
+   # CLI (standalone)
    copy opencode-copilot-bridge-*.exe "%USERPROFILE%\.bun\bin\opencode.exe"
-   ```
-3. Discover and configure available models:
-   ```
-   bun run scripts/discover-models.ts --apply
    ```
 4. Restart OpenCode
 
-### Option 2: Patch from Source
+### Option 3: Patch from Source
 
-1. Clone this repo and your OpenCode source:
+1. Clone this repo and the OpenCode source:
    ```powershell
    git clone https://github.com/templarsco/opencode-copilot-bridge.git
-   git clone https://github.com/opencode-ai/opencode.git
+   git clone <opencode-source-repo>
    ```
-2. Apply the patch:
+2. Apply the patch and build:
    ```powershell
-   cd opencode
-   git apply ..\opencode-copilot-bridge\patches\copilot.ts.patch
+   .\opencode-copilot-bridge\scripts\apply-patch.ps1
    ```
-3. Build:
-   ```powershell
-   bun install
-   bun run ./packages/opencode/script/build.ts --single
-   ```
-4. Binary is at `packages/opencode/dist/opencode-windows-x64/bin/opencode.exe`
-
+3. Binary is at `packages/opencode/dist/opencode-windows-x64/bin/opencode.exe`
 ## Model Discovery
 
 The `discover-models.ts` script queries GitHub Copilot's API to find all available models and generates OpenCode configuration for any that are missing.
@@ -160,8 +172,8 @@ See `config/opencode.json.example` for a full example.
 ## Auto-Build CI
 
 This repo includes a GitHub Actions workflow that:
-1. Checks for new commits on the OpenCode dev branch every 6 hours
-2. Clones the source (via `OPENCODE_PAT` secret), applies the patch, builds a Windows binary
+1. Checks for new **stable releases** of OpenCode every 6 hours
+2. Clones the release tag (via `OPENCODE_PAT` secret), applies the patch, builds a Windows binary
 3. Creates a tagged release (`bridge-vX.Y.Z`) with the patched `.exe`
 
 ### Setup
