@@ -75,12 +75,10 @@ jobs:
           if ($channel -eq "stable") {
             $sourceRepo = "anomalyco/opencode"
             $releaseRepo = "anomalyco/opencode"
-            $sourceBranch = ""  # uses tag directly
             $channelDisplay = "Stable"
           } else {
             $sourceRepo = "anomalyco/opencode"
             $releaseRepo = "anomalyco/opencode-beta"  # release-only repo for tag discovery
-            $sourceBranch = "beta"  # actual source lives on beta branch of main repo
             $channelDisplay = "Beta"
           }
 
@@ -118,12 +116,19 @@ jobs:
             $assetName = "opencode-copilot-bridge-$version-beta-windows-x64.exe"
           }
 
+          # Always get SHA from the stable source tag (beta uses same source as stable)
+          $stableRef = $ref
           if ($channel -eq "beta") {
-            # Beta: get SHA from the beta branch of the source repo (not the release-only repo)
-            $shaFull = gh api "repos/$sourceRepo/commits/$sourceBranch" --jq '.sha' 2>&1
-          } else {
-            $shaFull = gh api "repos/$sourceRepo/commits/$ref" --jq '.sha' 2>&1
+            # For beta, we need the latest stable tag to clone source from
+            $stableTagJson = gh release view --repo anomalyco/opencode --json tagName 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to fetch stable release for source: $stableTagJson"
+              exit 1
+            }
+            $stableRef = ($stableTagJson | ConvertFrom-Json).tagName
+            Write-Host "Beta: using stable source ref $stableRef for build"
           }
+          $shaFull = gh api "repos/$sourceRepo/commits/$stableRef" --jq '.sha' 2>&1
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Failed to fetch commit SHA: $shaFull"
             exit 1
@@ -167,11 +172,14 @@ jobs:
           $ref = "${{ steps.version.outputs.ref }}"
           $channel = "${{ steps.version.outputs.channel }}"
 
-          if ($channel -eq "stable") {
-            git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
+          # Always clone from stable tag (beta source is identical, avoids branch drift breakage)
+          if ($channel -eq "beta") {
+            $stableTagJson = gh release view --repo anomalyco/opencode --json tagName 2>&1
+            $stableRef = ($stableTagJson | ConvertFrom-Json).tagName
+            git clone --depth 1 --branch $stableRef "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
+            Write-Host "Beta: cloned from stable source ref $stableRef"
           } else {
-            # Beta: clone from main source repo's beta branch (opencode-beta is release-only)
-            git clone --depth 1 --branch beta "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
+            git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
           }
 
           Write-Host "Cloned $channel OpenCode ref: $ref"
