@@ -74,9 +74,13 @@ jobs:
 
           if ($channel -eq "stable") {
             $sourceRepo = "anomalyco/opencode"
+            $releaseRepo = "anomalyco/opencode"
+            $sourceBranch = ""  # uses tag directly
             $channelDisplay = "Stable"
           } else {
-            $sourceRepo = "anomalyco/opencode-beta"
+            $sourceRepo = "anomalyco/opencode"
+            $releaseRepo = "anomalyco/opencode-beta"  # release-only repo for tag discovery
+            $sourceBranch = "beta"  # actual source lives on beta branch of main repo
             $channelDisplay = "Beta"
           }
 
@@ -85,9 +89,9 @@ jobs:
             $version = $overrideRef
             Write-Host "Manual override ref for $channel channel: $ref"
           } else {
-            $tagJson = gh release view --repo $sourceRepo --json tagName 2>&1
+            $tagJson = gh release view --repo $releaseRepo --json tagName 2>&1
             if ($LASTEXITCODE -ne 0) {
-              Write-Error "Failed to fetch latest release from ${sourceRepo}: $tagJson"
+              Write-Error "Failed to fetch latest release from ${releaseRepo}: $tagJson"
               exit 1
             }
             $tag = ($tagJson | ConvertFrom-Json).tagName
@@ -114,9 +118,14 @@ jobs:
             $assetName = "opencode-copilot-bridge-$version-beta-windows-x64.exe"
           }
 
-          $shaFull = gh api "repos/$sourceRepo/commits/$ref" --jq '.sha' 2>&1
+          if ($channel -eq "beta") {
+            # Beta: get SHA from the beta branch of the source repo (not the release-only repo)
+            $shaFull = gh api "repos/$sourceRepo/commits/$sourceBranch" --jq '.sha' 2>&1
+          } else {
+            $shaFull = gh api "repos/$sourceRepo/commits/$ref" --jq '.sha' 2>&1
+          }
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to fetch commit SHA for ref '$ref' in '$sourceRepo': $shaFull"
+            Write-Error "Failed to fetch commit SHA: $shaFull"
             exit 1
           }
           $sha = $shaFull.Substring(0, 7)
@@ -161,7 +170,8 @@ jobs:
           if ($channel -eq "stable") {
             git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
           } else {
-            git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode-beta.git" opencode-src
+            # Beta: clone from main source repo's beta branch (opencode-beta is release-only)
+            git clone --depth 1 --branch beta "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
           }
 
           Write-Host "Cloned $channel OpenCode ref: $ref"
