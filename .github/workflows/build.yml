@@ -88,23 +88,15 @@ jobs:
           git clone --depth 1 --branch $ref "https://x-access-token:${{ secrets.OPENCODE_PAT }}@github.com/anomalyco/opencode.git" opencode-src
           Write-Host "Cloned OpenCode ref: $ref"
 
-      - name: Apply patch
+      - name: Apply Copilot JWT patch
         if: steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
-          $PSNativeCommandUseErrorActionPreference = $false
-          Push-Location opencode-src
-          git apply --check ..\patches\copilot.ts.patch 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Patch check failed. Attempting direct apply..." -ForegroundColor Yellow
-          }
-          git apply ..\patches\copilot.ts.patch
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Patch does not apply cleanly to this version. May need updating."
+          bun run scripts/patch-copilot.ts opencode-src/packages/opencode/src/plugin/copilot.ts
+          if ($LASTEXITCODE -eq 1) {
+            Write-Error "Patch script failed — see output above"
             exit 1
           }
-          Write-Host "Patch applied successfully"
-          Pop-Location
 
       - name: Install dependencies
         if: steps.version.outputs.skip != 'true'
