@@ -183,6 +183,8 @@ jobs:
           }
 
           Write-Host "Cloned $channel OpenCode ref: $ref"
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Apply Copilot JWT patch
         if: steps.filter.outputs.skip != 'true' && steps.version.outputs.skip != 'true'
