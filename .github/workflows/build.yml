@@ -47,17 +47,11 @@ jobs:
           echo "version=$version" >> $env:GITHUB_OUTPUT
 
           # Check if we already have a release for this version
-          $skipBuild = $false
-          try {
-            $existing = gh release view "bridge-$version" 2>&1
-            if ($LASTEXITCODE -eq 0 -and "${{ github.event.inputs.force_build }}" -ne "true") {
-              Write-Host "Release bridge-$version already exists. Skipping."
-              $skipBuild = $true
-            }
-          } catch {
-            # Release doesn't exist — proceed with build
-          }
-          if ($skipBuild) {
+          $PSNativeCommandUseErrorActionPreference = $false
+          $releases = (gh release list --json tagName --jq '.[].tagName' 2>$null) -split "`n"
+          $tagName = "bridge-$version"
+          if ($releases -contains $tagName -and "${{ github.event.inputs.force_build }}" -ne "true") {
+            Write-Host "Release $tagName already exists. Skipping."
             echo "skip=true" >> $env:GITHUB_OUTPUT
           } else {
             echo "skip=false" >> $env:GITHUB_OUTPUT
