@@ -313,7 +313,7 @@ Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
 $tagSummary = if ($Version) { $Version } else { "$Channel channel" }
 Write-Host "  +=============================================+" -ForegroundColor Green
-Write-Host "  |   Bridge $tagSummary installed!      |" -ForegroundColor Green
+Write-Host "  |   Bridge $tagSummary installed!             |" -ForegroundColor Green
 Write-Host "  +=============================================+" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Patched: $($installed -join ', ')" -ForegroundColor Cyan
