@@ -47,9 +47,17 @@ jobs:
           echo "version=$version" >> $env:GITHUB_OUTPUT
 
           # Check if we already have a release for this version
-          $existing = gh release view "bridge-$version" 2>$null
-          if ($LASTEXITCODE -eq 0 -and "${{ github.event.inputs.force_build }}" -ne "true") {
-            Write-Host "Release bridge-$version already exists. Skipping."
+          $skipBuild = $false
+          try {
+            $existing = gh release view "bridge-$version" 2>&1
+            if ($LASTEXITCODE -eq 0 -and "${{ github.event.inputs.force_build }}" -ne "true") {
+              Write-Host "Release bridge-$version already exists. Skipping."
+              $skipBuild = $true
+            }
+          } catch {
+            # Release doesn't exist — proceed with build
+          }
+          if ($skipBuild) {
             echo "skip=true" >> $env:GITHUB_OUTPUT
           } else {
             echo "skip=false" >> $env:GITHUB_OUTPUT
@@ -70,12 +78,16 @@ jobs:
         shell: pwsh
         run: |
           Push-Location opencode-src
-          git apply --check ..\patches\copilot.ts.patch
+          $patchResult = git apply --check ..\patches\copilot.ts.patch 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Patch check failed: $patchResult" -ForegroundColor Yellow
+            Write-Host "Attempting to apply anyway..." -ForegroundColor Yellow
+          }
+          git apply ..\patches\copilot.ts.patch
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Patch does not apply cleanly to this version"
             exit 1
           }
-          git apply ..\patches\copilot.ts.patch
           Write-Host "Patch applied successfully"
           Pop-Location
 
