@@ -1,0 +1,143 @@
+name: Build Patched OpenCode (Windows)
+
+on:
+  # Auto-trigger when OpenCode releases a new version
+  schedule:
+    - cron: '0 */6 * * *'  # Check every 6 hours
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      opencode_version:
+        description: 'OpenCode version tag (e.g. v1.2.17). Leave empty for latest.'
+        required: false
+        default: ''
+      force_build:
+        description: 'Force build even if version already released'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout bridge repo
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Determine OpenCode version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.opencode_version }}" -ne "") {
+            $version = "${{ github.event.inputs.opencode_version }}"
+          } else {
+            # Fetch latest release from OpenCode
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/opencode-ai/opencode/releases/latest" -Headers @{ "User-Agent" = "opencode-copilot-bridge" }
+            $version = $release.tag_name
+          }
+          Write-Host "OpenCode version: $version"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+          # Check if we already have a release for this version
+          $existing = gh release view "bridge-$version" 2>$null
+          if ($LASTEXITCODE -eq 0 -and "${{ github.event.inputs.force_build }}" -ne "true") {
+            Write-Host "Release bridge-$version already exists. Skipping."
+            echo "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "skip=false" >> $env:GITHUB_OUTPUT
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clone OpenCode source
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          git clone --depth 1 --branch $version https://github.com/opencode-ai/opencode.git opencode-src
+          Write-Host "Cloned OpenCode $version"
+
+      - name: Apply patch
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          Push-Location opencode-src
+          git apply --check ..\patches\copilot.ts.patch
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Patch does not apply cleanly to this version"
+            exit 1
+          }
+          git apply ..\patches\copilot.ts.patch
+          Write-Host "Patch applied successfully"
+          Pop-Location
+
+      - name: Install dependencies
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          Push-Location opencode-src
+          bun install
+          Pop-Location
+
+      - name: Build Windows binary
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          Push-Location opencode-src
+          bun run ./packages/opencode/script/build.ts --single
+          Pop-Location
+
+          $exe = "opencode-src\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe"
+          if (Test-Path $exe) {
+            Write-Host "Build successful: $exe"
+            $size = (Get-Item $exe).Length / 1MB
+            Write-Host "Binary size: $([math]::Round($size, 1)) MB"
+          } else {
+            Write-Error "Build output not found"
+            exit 1
+          }
+
+      - name: Create release
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "bridge-$version"
+          $exe = "opencode-src\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe"
+
+          # Rename binary with version
+          $dest = "opencode-copilot-bridge-$version-windows-x64.exe"
+          Copy-Item $exe $dest
+
+          # Create release
+          gh release create $tag $dest `
+            --title "OpenCode Copilot Bridge $version" `
+            --notes "Patched OpenCode $version with Copilot JWT bridge for full model access.
+
+## What's included
+- Pre-built Windows x64 binary with JWT token exchange patch
+- Unlocks models available in VS Code Copilot but not yet in OpenCode (e.g. claude-opus-4.6-fast)
+
+## Requirements
+- VS Code with GitHub Copilot extension (authenticated)
+- Windows x64
+
+## Usage
+1. Download the .exe below
+2. Replace your installed OpenCode binary:
+   - Desktop: ``%LOCALAPPDATA%\OpenCode Beta\opencode-cli.exe``
+   - CLI: ``%USERPROFILE%\.bun\bin\opencode.exe``
+3. Run ``bun run scripts/discover-models.ts --apply`` to auto-discover and configure new models
+4. Restart OpenCode
+
+Based on OpenCode $version"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

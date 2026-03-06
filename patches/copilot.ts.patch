@@ -1,0 +1,77 @@
+diff --git a/packages/opencode/src/plugin/copilot.ts b/packages/opencode/src/plugin/copilot.ts
+index 39ea0d0..cc90971 100644
+--- a/packages/opencode/src/plugin/copilot.ts
++++ b/packages/opencode/src/plugin/copilot.ts
+@@ -2,7 +2,7 @@ import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+ import { Installation } from "@/installation"
+ import { iife } from "@/util/iife"
+ 
+-const CLIENT_ID = "Ov23li8tweQw6odWQebz"
++const CLIENT_ID = "Iv1.b507a08c87ecfe98" // VS Code client ID for full Copilot model access
+ // Add a small safety buffer when polling to avoid hitting the server
+ // slightly too early due to clock skew / timer drift.
+ const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000 // 3 seconds
+@@ -17,6 +17,49 @@ function getUrls(domain: string) {
+   }
+ }
+ 
++// Copilot JWT token exchange — exchanges VS Code's OAuth token for a
++// Copilot JWT that unlocks additional models (e.g. claude-opus-4.6-fast).
++let cached: { token: string; expires: number } | undefined
++
++async function vscodeToken() {
++  const dir = process.env.LOCALAPPDATA
++  if (!dir) return undefined
++  try {
++    const apps = await Bun.file(`${dir}/github-copilot/apps.json`).json()
++    for (const [key, val] of Object.entries(apps as Record<string, any>))
++      if (key.includes("Ov23liV9UpD7Rnfnskm3")) return val.oauth_token as string
++  } catch {}
++  return undefined
++}
++
++async function exchange(token: string) {
++  const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
++    headers: {
++      Authorization: `token ${token}`,
++      Accept: "application/json",
++      "User-Agent": "GithubCopilot/1.250.0",
++      "Editor-Version": "vscode/1.95.0",
++      "Editor-Plugin-Version": "copilot/1.250.0",
++      "X-GitHub-Api-Version": "2024-12-15",
++    },
++  })
++  if (!res.ok) return undefined
++  const data = (await res.json()) as { token: string; expires_at: number }
++  if (!data.token || !data.expires_at) return undefined
++  const expires = data.expires_at < 1e10 ? data.expires_at * 1000 : data.expires_at
++  return { token: data.token, expires }
++}
++
++async function jwt() {
++  if (cached && cached.expires > Date.now() + 300_000) return cached.token
++  const token = await vscodeToken()
++  if (!token) return undefined
++  const result = await exchange(token)
++  if (!result) return undefined
++  cached = result
++  return cached.token
++}
++
+ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
+   const sdk = input.client
+   return {
+@@ -122,8 +165,11 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
+               "x-initiator": isAgent ? "agent" : "user",
+               ...(init?.headers as Record<string, string>),
+               "User-Agent": `opencode/${Installation.VERSION}`,
+-              Authorization: `Bearer ${info.refresh}`,
+-              "Openai-Intent": "conversation-edits",
++              Authorization: `Bearer ${(await jwt()) ?? info.refresh}`,
++              "Copilot-Integration-Id": "vscode-chat",
++              "Editor-Version": "vscode/1.107.0",
++              "Editor-Plugin-Version": "copilot-chat/0.35.0",
++              "Openai-Organization": "github-copilot",
+             }
+ 
+             if (isVision) {
