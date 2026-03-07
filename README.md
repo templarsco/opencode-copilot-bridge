@@ -30,15 +30,20 @@ This bridge fixes both **authentication** and **model discovery**:
 
 ### Option 1: One-liner Install (Easiest)
 
+Works on **PowerShell 5.1, 7.x, and newer** — just copy & paste:
+
 ```powershell
-# Install stable bridge (Desktop Stable + CLI)
+# Install stable bridge (Desktop Stable + CLI) — default
 irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
 
 # Install beta bridge (Desktop Beta)
-powershell -Command "& { $script = irm 'https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1'; $sb = [scriptblock]::Create($script); & $sb -Channel beta }"
+$env:BRIDGE_CHANNEL='beta'; irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
 
 # Install both stable and beta
-powershell -Command "& { $script = irm 'https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1'; $sb = [scriptblock]::Create($script); & $sb -Channel all }"
+$env:BRIDGE_CHANNEL='all'; irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+
+# Uninstall (restore original binaries)
+$env:BRIDGE_UNINSTALL='1'; irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
 ```
 
 This wizard automatically:
@@ -49,11 +54,6 @@ This wizard automatically:
   - **Stable**: Desktop Stable (`%LOCALAPPDATA%\OpenCode\`) + CLI (`%USERPROFILE%\.bun\bin\`)
   - **Beta**: Desktop Beta (`%LOCALAPPDATA%\OpenCode Beta\`)
 - Restarts Desktop apps
-To uninstall and restore originals:
-```powershell
-git clone https://github.com/templarsco/opencode-copilot-bridge.git
-.\opencode-copilot-bridge\scripts\install-bridge.ps1 -Uninstall
-```
 
 ### Option 2: Manual Install
 

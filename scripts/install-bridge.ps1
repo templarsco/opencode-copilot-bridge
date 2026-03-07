@@ -1,23 +1,46 @@
-#MZ|# install-bridge.ps1 — OpenCode Copilot Bridge Installer
-#ZW|#
-#TY|# Downloads the latest bridge release, closes all OpenCode instances,
-#PJ|# replaces sidecars with the patched binary, and restarts the apps.
-#NJ|#
-#HY|# One-liner install (PowerShell):
-#QS|#   irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex (defaults to stable)
-#BJ|#
-#MT|# From cloned repo:
-#PR|#   .\scripts\install-bridge.ps1
-#WQ|#   .\scripts\install-bridge.ps1 -Uninstall         # Restore originals
-#ZR|#   .\scripts\install-bridge.ps1 -Version bridge-v1.2.20  # Specific version
-#XX|#   .\scripts\install-bridge.ps1 -Channel beta          # Beta channel
-#XX|#   .\scripts\install-bridge.ps1 -Channel all           # Both stable + beta
-#BQ|
+# install-bridge.ps1 — OpenCode Copilot Bridge Installer
+#
+# Downloads the latest bridge release, closes all OpenCode instances,
+# replaces sidecars with the patched binary, and restarts the apps.
+#
+# Universal one-liner install (works on PowerShell 5.1, 7.x, and newer):
+#   irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+#
+#   To install beta:   $env:BRIDGE_CHANNEL='beta';  irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+#   To install both:   $env:BRIDGE_CHANNEL='all';   irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+#   To uninstall:      $env:BRIDGE_UNINSTALL='1';   irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex
+#
+# From cloned repo:
+#   .\scripts\install-bridge.ps1
+#   .\scripts\install-bridge.ps1 -Uninstall
+#   .\scripts\install-bridge.ps1 -Version bridge-v1.2.20
+#   .\scripts\install-bridge.ps1 -Channel beta
+#   .\scripts\install-bridge.ps1 -Channel all
+
 param(
     [switch]$Uninstall,
     [string]$Version = "",
-    [ValidateSet('stable', 'beta', 'all')][string]$Channel = 'stable'
+    [ValidateSet('stable', 'beta', 'all')][string]$Channel = ''
 )
+
+# ─── Env var fallback (enables universal `irm | iex` one-liners) ──
+# When piped via `irm | iex`, PowerShell can't pass params directly.
+# Instead, set env vars before the pipeline: $env:BRIDGE_CHANNEL='beta'
+if (-not $Channel -and $env:BRIDGE_CHANNEL) {
+    $Channel = $env:BRIDGE_CHANNEL
+    Remove-Item Env:BRIDGE_CHANNEL -ErrorAction SilentlyContinue
+}
+if (-not $Channel) { $Channel = 'stable' }
+
+if (-not $Uninstall -and $env:BRIDGE_UNINSTALL) {
+    $Uninstall = [switch]$true
+    Remove-Item Env:BRIDGE_UNINSTALL -ErrorAction SilentlyContinue
+}
+
+if (-not $Version -and $env:BRIDGE_VERSION) {
+    $Version = $env:BRIDGE_VERSION
+    Remove-Item Env:BRIDGE_VERSION -ErrorAction SilentlyContinue
+}
 
 $ErrorActionPreference = "Stop"
 $repo = "templarsco/opencode-copilot-bridge"
