@@ -77,7 +77,7 @@ $targets = @(
 Write-Host ""
 $bannerTitle = "OpenCode Copilot Bridge - Installer ($Channel channel)"
 Write-Host "  +=============================================+" -ForegroundColor Cyan
-Write-Host "  |   $bannerTitle" -ForegroundColor Cyan       |
+Write-Host "  |   $bannerTitle" -ForegroundColor Cyan
 Write-Host "  +=============================================+" -ForegroundColor Cyan
 Write-Host ""
 
