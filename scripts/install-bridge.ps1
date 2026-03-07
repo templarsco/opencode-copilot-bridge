@@ -20,7 +20,7 @@
 param(
     [switch]$Uninstall,
     [string]$Version = "",
-    [ValidateSet('stable', 'beta', 'all')][string]$Channel = ''
+    [string]$Channel = ''
 )
 
 # ─── Env var fallback (enables universal `irm | iex` one-liners) ──
@@ -31,6 +31,12 @@ if (-not $Channel -and $env:BRIDGE_CHANNEL) {
     Remove-Item Env:BRIDGE_CHANNEL -ErrorAction SilentlyContinue
 }
 if (-not $Channel) { $Channel = 'stable' }
+
+# Validate channel value
+if ($Channel -notin @('stable', 'beta', 'all')) {
+    Write-Host "ERROR: Invalid channel '$Channel'. Must be: stable, beta, all" -ForegroundColor Red
+    exit 1
+}
 
 if (-not $Uninstall -and $env:BRIDGE_UNINSTALL) {
     $Uninstall = [switch]$true
