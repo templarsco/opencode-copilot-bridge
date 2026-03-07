@@ -84,15 +84,24 @@ Write-Host ""
 # ─── Uninstall mode ─────────────────────────────────────────────────
 if ($Uninstall) {
     Write-Host "[Uninstall] Restoring original binaries..." -ForegroundColor Yellow
+
+    # Kill ALL OpenCode processes first (sidecar + desktop apps)
+    $processNames = @("opencode-cli", "opencode", "OpenCode")
+    foreach ($proc in $processNames) {
+        $running = Get-Process -Name $proc -ErrorAction SilentlyContinue
+        if ($running) {
+            foreach ($p in $running) {
+                Write-Host "  Closing: $($p.Name) (PID $($p.Id))" -ForegroundColor DarkYellow
+            }
+            Stop-Process -Name $proc -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Seconds 3
+
     $restored = 0
     foreach ($target in $targets) {
         $orig = "$($target.Path).original"
         if (Test-Path $orig) {
-            # Kill process if running
-            if ($target.Proc) {
-                Get-Process -Name $target.Proc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-            }
-            Start-Sleep -Milliseconds 500
             Copy-Item $orig $target.Path -Force
             Remove-Item $orig -Force
             Write-Host "  Restored: $($target.Name)" -ForegroundColor Green
@@ -348,5 +357,5 @@ Write-Host ""
 Write-Host "  Patched: $($installed -join ', ')" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  To uninstall (restore originals):" -ForegroundColor DarkGray
-Write-Host "    .\scripts\install-bridge.ps1 -Uninstall" -ForegroundColor DarkGray
+Write-Host "    `$env:BRIDGE_UNINSTALL='1'; irm https://raw.githubusercontent.com/templarsco/opencode-copilot-bridge/main/scripts/install-bridge.ps1 | iex" -ForegroundColor DarkGray
 Write-Host ""
