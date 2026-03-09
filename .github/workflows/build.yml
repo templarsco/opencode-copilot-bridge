@@ -1,4 +1,4 @@
-name: Build Patched OpenCode (Windows)
+name: Build Patched OpenCode
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   check-and-build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +59,7 @@ jobs:
         if: steps.filter.outputs.skip != 'true'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: '1.3.10'
 
       - name: Determine channel version
         if: steps.filter.outputs.skip != 'true'
@@ -205,24 +205,37 @@ jobs:
           Pop-Location
 
       - name: Build Windows binary
+        id: build
         if: steps.filter.outputs.skip != 'true' && steps.version.outputs.skip != 'true'
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $env:OPENCODE_VERSION = "$version"
+          $env:OPENCODE_VERSION = ($version -replace '^v', '')
 
           Push-Location opencode-src
-          bun run ./packages/opencode/script/build.ts --single
+          bun run ./packages/opencode/script/build.ts
           Pop-Location
 
-          $exe = "opencode-src\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe"
-          if (Test-Path $exe) {
+          $candidates = @(
+            "opencode-src/packages/opencode/dist/opencode-windows-x64/bin/opencode.exe",
+            "opencode-src/packages/opencode/dist/opencode-windows-x64-baseline/bin/opencode.exe"
+          )
+          $exe = $null
+          foreach ($path in $candidates) {
+            if (Test-Path $path) {
+              $exe = $path
+              break
+            }
+          }
+          if ($exe) {
             Write-Host "Build successful: $exe"
             Write-Host "Injected OPENCODE_VERSION: $env:OPENCODE_VERSION"
             $size = (Get-Item $exe).Length / 1MB
             Write-Host "Binary size: $([math]::Round($size, 1)) MB"
+            echo "exe_path=$exe" >> $env:GITHUB_OUTPUT
           } else {
-            Write-Error "Build output not found"
+            Write-Error "No Windows binary found in dist/"
+            Get-ChildItem -Recurse opencode-src/packages/opencode/dist/ -Name | Select-Object -First 30
             exit 1
           }
 
@@ -237,7 +250,7 @@ jobs:
           $assetName = "${{ steps.version.outputs.asset_name }}"
           $sourceRepo = "${{ steps.version.outputs.source_repo }}"
           $channelDisplay = "${{ steps.version.outputs.channel_display }}"
-          $exe = "opencode-src\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe"
+          $exe = "${{ steps.build.outputs.exe_path }}"
 
           Copy-Item $exe $assetName
 
