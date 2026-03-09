@@ -20,6 +20,10 @@ on:
           - stable
           - beta
           - both
+      skip_patch:
+        description: 'Skip applying the Copilot JWT patch (for diagnostics)'
+        required: false
+        default: 'false'
 
   schedule:
     - cron: '0 */6 * * *'
@@ -188,7 +192,7 @@ jobs:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Apply Copilot JWT patch
-        if: steps.filter.outputs.skip != 'true' && steps.version.outputs.skip != 'true'
+        if: steps.filter.outputs.skip != 'true' && steps.version.outputs.skip != 'true' && github.event.inputs.skip_patch != 'true'
         shell: pwsh
         run: |
           bun run scripts/patch-copilot.ts opencode-src/packages/opencode/src/plugin/copilot.ts
@@ -218,8 +222,8 @@ jobs:
           Pop-Location
 
           $candidates = @(
-            "opencode-src/packages/opencode/dist/opencode-windows-x64/bin/opencode.exe",
-            "opencode-src/packages/opencode/dist/opencode-windows-x64-baseline/bin/opencode.exe"
+            "opencode-src/packages/opencode/dist/opencode-windows-x64-baseline/bin/opencode.exe",
+            "opencode-src/packages/opencode/dist/opencode-windows-x64/bin/opencode.exe"
           )
           $exe = $null
           foreach ($path in $candidates) {
