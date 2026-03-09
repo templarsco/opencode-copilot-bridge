@@ -210,7 +210,6 @@ jobs:
         run: |
           $version = "${{ steps.version.outputs.version }}"
           $env:OPENCODE_VERSION = "$version"
-          $env:OPENCODE_RELEASE = "true"
 
           Push-Location opencode-src
           bun run ./packages/opencode/script/build.ts --single
