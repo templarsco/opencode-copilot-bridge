@@ -168,6 +168,7 @@ jobs:
 
       - name: Clone OpenCode source
         if: steps.filter.outputs.skip != 'true' && steps.version.outputs.skip != 'true'
+        shell: pwsh
         run: |
           $ref = "${{ steps.version.outputs.ref }}"
           $channel = "${{ steps.version.outputs.channel }}"
