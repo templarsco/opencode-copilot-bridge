@@ -48,6 +48,23 @@ if (-not $Version -and $env:BRIDGE_VERSION) {
     Remove-Item Env:BRIDGE_VERSION -ErrorAction SilentlyContinue
 }
 
+# ─── Version detection helper ──────────────────────────────────────
+function Get-InstalledOpenCodeVersion([string]$displayNamePattern) {
+    $regPaths = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    foreach ($regPath in $regPaths) {
+        $entry = Get-ItemProperty $regPath -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like $displayNamePattern } |
+            Select-Object -First 1
+        if ($entry -and $entry.DisplayVersion) {
+            return $entry.DisplayVersion
+        }
+    }
+    return $null
+}
 $ErrorActionPreference = "Stop"
 $repo = "templarsco/opencode-copilot-bridge"
 $apiBase = "https://api.github.com/repos/$repo"
@@ -120,7 +137,7 @@ if ($Uninstall) {
 }
 
 # ─── Step 1: Detect installations ──────────────────────────────────
-Write-Host "[1/5] Detecting OpenCode installations..." -ForegroundColor Yellow
+Write-Host "[1/6] Detecting OpenCode installations..." -ForegroundColor Yellow
 $found = @()
 foreach ($target in $targets) {
     $dir = Split-Path -Parent $target.Path
@@ -140,7 +157,7 @@ if ($found.Count -eq 0) {
 }
 
 # ─── Step 2: Fetch latest release(s) ───────────────────────────────
-Write-Host "`n[2/5] Fetching latest bridge release(s)..." -ForegroundColor Yellow
+Write-Host "`n[2/6] Fetching latest bridge release(s)..." -ForegroundColor Yellow
 
 # Helper: Fetch a specific release or tag
 function Get-BridgeRelease([string]$tag) {
@@ -176,16 +193,55 @@ if ($Version) {
     $releases['explicit'] = $release
     $assets['explicit'] = Find-Asset $release "*windows-x64*exe"
 } elseif ($Channel -eq 'stable' -or $Channel -eq 'all') {
-    # Fetch all releases and find latest stable (non-beta tag)
-    $allReleases = Invoke-RestMethod -Uri "$apiBase/releases" -Headers @{ "User-Agent" = "opencode-bridge-installer" }
-    $stableRelease = $allReleases | Where-Object { $_.tag_name -like 'bridge-v*' -and $_.tag_name -notlike '*beta*' } | Select-Object -First 1
+    # Detect installed stable desktop version from registry
+    $installedStable = Get-InstalledOpenCodeVersion 'OpenCode'
+    # Filter out beta entries (DisplayName 'OpenCode Beta' also matches 'OpenCode')
+    $installedStableBeta = Get-InstalledOpenCodeVersion 'OpenCode Beta*'
+    if ($installedStable -and $installedStableBeta -and $installedStable -eq $installedStableBeta) {
+        # The match was actually the beta entry; re-query more precisely
+        $regPaths = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        $installedStable = $null
+        foreach ($regPath in $regPaths) {
+            $entry = Get-ItemProperty $regPath -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -match '^OpenCode$' -or $_.DisplayName -match '^OpenCode v' } |
+                Select-Object -First 1
+            if ($entry -and $entry.DisplayVersion) {
+                $installedStable = $entry.DisplayVersion
+                break
+            }
+        }
+    }
+
+    # Fetch all releases
+    $allReleases = Invoke-RestMethod -Uri "$apiBase/releases" -Headers @{ 'User-Agent' = 'opencode-bridge-installer' }
+
+    if ($installedStable) {
+        Write-Host "  Detected installed stable version: v$installedStable" -ForegroundColor Cyan
+        # Try to find a bridge release matching the installed version
+        $matchTag = "bridge-v$installedStable"
+        $stableRelease = $allReleases | Where-Object { $_.tag_name -eq $matchTag } | Select-Object -First 1
+        if ($stableRelease) {
+            Write-Host "  Matched bridge release: $matchTag" -ForegroundColor Green
+        } else {
+            Write-Host "  No bridge release for v$installedStable — falling back to latest" -ForegroundColor Yellow
+            $stableRelease = $allReleases | Where-Object { $_.tag_name -like 'bridge-v*' -and $_.tag_name -notlike '*beta*' } | Select-Object -First 1
+        }
+    } else {
+        # Cannot detect version — fall back to latest stable release
+        $stableRelease = $allReleases | Where-Object { $_.tag_name -like 'bridge-v*' -and $_.tag_name -notlike '*beta*' } | Select-Object -First 1
+    }
+
     if (-not $stableRelease) {
         Write-Host "  No stable release found." -ForegroundColor Red
         Write-Host ""
         return
     }
     $releases['stable'] = $stableRelease
-    $assets['stable'] = Find-Asset $stableRelease "*-stable-windows-x64.exe"
+    $assets['stable'] = Find-Asset $stableRelease '*-stable-windows-x64.exe'
 }
 
 if ($Channel -eq 'beta' -or $Channel -eq 'all') {
@@ -222,7 +278,7 @@ foreach ($key in $releases.Keys) {
 }
 
 # ─── Step 3: Download ──────────────────────────────────────────────
-Write-Host "`n[3/5] Downloading bridge binary(ies)..." -ForegroundColor Yellow
+Write-Host "`n[3/6] Downloading bridge binary(ies)..." -ForegroundColor Yellow
 $tempDir = Join-Path $env:TEMP "opencode-bridge-install"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 $downloads = @{}
@@ -254,7 +310,7 @@ foreach ($key in $assets.Keys) {
 }
 
 # ─── Step 4: Kill OpenCode processes ───────────────────────────────
-Write-Host "`n[4/5] Closing OpenCode processes..." -ForegroundColor Yellow
+Write-Host "`n[4/6] Closing OpenCode processes..." -ForegroundColor Yellow
 
 # Kill sidecar first, then desktop apps
 $processNames = @("opencode-cli", "OpenCode")
@@ -279,7 +335,7 @@ if (-not $killed) {
 }
 
 # ─── Step 5: Replace binaries ──────────────────────────────────────
-Write-Host "`n[5/5] Installing bridge binary(ies)..." -ForegroundColor Yellow
+Write-Host "`n[5/6] Installing bridge binary(ies)..." -ForegroundColor Yellow
 $installed = @()
 $appsToRestart = @()
 
@@ -332,6 +388,68 @@ foreach ($downloadKey in $downloads.Keys) {
         if ($target.App -and (Test-Path $target.App)) {
             $appsToRestart += $target
         }
+    }
+}
+
+# ─── Step 6: Fix Drizzle migration tracking ─────────────────────────
+# OpenCode v1.2.21+ changed Drizzle ORM from hash-based to name-based
+# migration tracking. Old DBs have NULL names → Drizzle re-runs all
+# migrations → CREATE TABLE fails → app crashes.
+# See: https://github.com/anomalyco/opencode/issues/16678
+Write-Host "`n[6/6] Checking migration tracking..." -ForegroundColor Yellow
+$dataDir = Join-Path $env:USERPROFILE '.local\share\opencode'
+$dbFiles = @('opencode.db', 'opencode-beta.db') | ForEach-Object { Join-Path $dataDir $_ } | Where-Object { Test-Path $_ }
+
+if ($dbFiles.Count -eq 0) {
+    Write-Host "  No databases found — skipping" -ForegroundColor DarkGray
+} else {
+    $bunExe = Get-Command bun -ErrorAction SilentlyContinue
+    if (-not $bunExe) {
+        Write-Host "  bun not found — skipping migration fix" -ForegroundColor DarkGray
+        Write-Host "  Run manually: bun run scripts/fix-migrations.ts" -ForegroundColor DarkGray
+    } else {
+        $fixTs = @'
+import { Database } from "bun:sqlite";
+import { existsSync } from "fs";
+const MIGRATIONS: Record<string, number> = {
+  "20260127222353_familiar_lady_ursula": 1769552633000,
+  "20260211171708_add_project_commands": 1770830228000,
+  "20260213144116_wakeful_the_professor": 1770993676000,
+  "20260225215848_workspace": 1772056728000,
+  "20260227213759_add_session_workspace_id": 1772228279000,
+  "20260228203230_blue_harpoon": 1772310750000,
+  "20260303231226_add_workspace_fields": 1772579546000,
+};
+for (const dbPath of process.argv.slice(2)) {
+  if (!existsSync(dbPath)) continue;
+  const db = new Database(dbPath);
+  const te = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='__drizzle_migrations'").get();
+  if (!te) { db.close(); continue; }
+  const nulls = (db.query("SELECT COUNT(*) as c FROM __drizzle_migrations WHERE name IS NULL OR name = ''").get() as any).c;
+  if (nulls === 0) { console.log(`  ok: ${dbPath.split(/[\\/]/).pop()}`); db.close(); continue; }
+  let fixed = 0;
+  for (const [name, ts] of Object.entries(MIGRATIONS)) {
+    const has = db.query("SELECT id FROM __drizzle_migrations WHERE name = ?").get(name);
+    if (has) continue;
+    const row = db.query("SELECT id FROM __drizzle_migrations WHERE created_at = ? AND (name IS NULL OR name = '')").get(ts);
+    if (row) { db.query("UPDATE __drizzle_migrations SET name = ?, applied_at = datetime('now') WHERE created_at = ? AND (name IS NULL OR name = '')").run(name, ts); fixed++; }
+    else { db.query("INSERT INTO __drizzle_migrations (hash, created_at, name, applied_at) VALUES ('', ?, ?, datetime('now'))").run(ts, name); fixed++; }
+  }
+  console.log(`  fixed: ${dbPath.split(/[\\/]/).pop()} (${fixed} migration names backfilled)`);
+  db.close();
+}
+'@
+        $fixPath = Join-Path $env:TEMP 'opencode-fix-migrations.ts'
+        Set-Content -Path $fixPath -Value $fixTs -Encoding UTF8
+        try {
+            $dbArgs = $dbFiles -join '" "'
+            $output = & bun $fixPath @dbFiles 2>&1
+            foreach ($line in $output) { Write-Host $line -ForegroundColor Green }
+        } catch {
+            Write-Host "  Migration fix failed: $_" -ForegroundColor Yellow
+            Write-Host "  App may still work — this is non-critical" -ForegroundColor DarkGray
+        }
+        Remove-Item $fixPath -Force -ErrorAction SilentlyContinue
     }
 }
 
