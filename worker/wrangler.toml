@@ -1,0 +1,15 @@
+name = "opencode-release-watcher"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Cron trigger — every 60 seconds (requires Workers Paid plan)
+[triggers]
+crons = ["*/1 * * * *"]
+
+# KV namespace binding — stores last-seen release tags
+[[kv_namespaces]]
+binding = "VERSIONS"
+id = ""  # Required — run: npx wrangler kv namespace create VERSIONS
+
+# Secrets (set via CLI, NOT in this file):
+#   wrangler secret put GITHUB_TOKEN
