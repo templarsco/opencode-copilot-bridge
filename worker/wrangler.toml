@@ -9,7 +9,7 @@ crons = ["*/1 * * * *"]
 # KV namespace binding — stores last-seen release tags
 [[kv_namespaces]]
 binding = "VERSIONS"
-id = ""  # Required — run: npx wrangler kv namespace create VERSIONS
+id = "acd6715a1c3f454da13cd54d469b507b"
 
 # Secrets (set via CLI, NOT in this file):
 #   wrangler secret put GITHUB_TOKEN
