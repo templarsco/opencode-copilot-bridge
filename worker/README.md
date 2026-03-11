@@ -7,10 +7,10 @@ the patched build pipeline when a new version is detected.
 
 ```
                                   ┌─────────────────────┐
-                         poll     │  GitHub Releases API │
-                 ┌───────────────►│  anomalyco/opencode  │
-                 │   every 60s    │  anomalyco/opencode- │
-                 │                │  beta                │
+                         poll     │  GitHub Releases API│
+                 ┌───────────────►│  anomalyco/opencode │
+                 │   every 60s    │  anomalyco/opencode-│
+                 │                │  beta               │
 ┌────────────┐   │                └──────────┬──────────┘
 │ Cloudflare │───┤                           │
 │   Worker   │   │ compare with              │ new tag?
