@@ -17,8 +17,8 @@ the patched build pipeline when a new version is detected.
 │ (cron)     │───┤ stored version            │
 └────────────┘   │                           ▼
                  │                ┌──────────────────────┐
-                 │   KV Store     │  workflow_dispatch    │
-                 └───────────────►│  templarsco/opencode- │
+                 │   KV Store     │  workflow_dispatch   │
+                 └───────────────►│  templarsco/opencode-│
                      update       │  copilot-bridge      │
                      version      └──────────────────────┘
 ```
